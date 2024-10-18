@@ -11,6 +11,10 @@ from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sheets import update_google_sheet
 import psycopg2
+from docx import Document
+import random
+import os
+from aiogram import types, F
 
 dp = Dispatcher()
 
@@ -59,16 +63,14 @@ def update_user_score(telegram_id, score):
     connection.close()
 
 
-def is_user_registred(telegram_id):
+def is_user_registered(telegram_id):
     connection = get_db_connection()
     cursor = connection.cursor()
-    cursor.execute(
-        "SELECT COUNT(*) FROM users WHERE telegram_id = %s", (telegram_id,)
-    )
-    result = cursor.fetchone()[0]
+    cursor.execute("SELECT 1 FROM users WHERE telegram_id = %s", (telegram_id,))
+    user_exists = cursor.fetchone() is not None
     cursor.close()
     connection.close()
-    return result > 0
+    return user_exists
 
 
 def is_admin(telegram_id):
@@ -102,6 +104,68 @@ def get_all_admins():
     return admins
 
 
+def get_random_question():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute(
+        "SELECT id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer FROM questions ORDER BY RANDOM() LIMIT 1")
+    question = cursor.fetchone()
+    cursor.close()
+    connection.close()
+    return question
+
+
+def get_question_by_id(question_id):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute("SELECT * FROM questions WHERE id = %s", (question_id,))
+    question = cursor.fetchone()
+    cursor.close()
+    connection.close()
+    return question
+
+
+def add_questions_from_docx(file_path):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+
+    document = Document(file_path)
+    question_data = []
+
+    current_question = {}
+    for para in document.paragraphs:
+        text = para.text.strip()
+        if text.startswith("Savol:"):
+            current_question['question'] = text[6:].strip()
+        elif text.startswith("Javob A:"):
+            current_question['a'] = text[8:].strip()
+        elif text.startswith("Javob B:"):
+            current_question['b'] = text[8:].strip()
+        elif text.startswith("Javob C:"):
+            current_question['c'] = text[8:].strip()
+        elif text.startswith("Javob D:"):
+            current_question['d'] = text[8:].strip()
+        elif text.startswith("Tug'ri javob:"):
+            current_question['correct'] = text[13:].strip()
+
+        if 'question' in current_question and 'correct' in current_question:
+            question_data.append(current_question)
+            current_question = {}
+
+    for question in question_data:
+        cursor.execute("""
+                INSERT INTO questions (question_text, answer_a, answer_b, answer_c, answer_d, correct_answer)
+                VALUES (%s, %s, %s, %s, %s, %s) 
+            """, (
+            question['question'], question['a'], question['b'], question['c'], question['d'], question['correct']))
+
+    connection.commit()
+    cursor.close()
+    connection.close()
+
+    return len(question_data)
+
+
 @dp.message(Command('ranking'))
 async def show_ranking(message: types.Message):
     connection = get_db_connection()
@@ -127,11 +191,11 @@ async def show_ranking(message: types.Message):
 @dp.message(Command('start'))
 async def start_command(message: types.Message, state: FSMContext):
     telegram_id = message.from_user.id
-    if is_user_registred(telegram_id):
-        await message.answer("siz registartsiya qilgansiz")
+    if is_user_registered(telegram_id):
+        await message.answer("siz registratsiya qilib bulgansz!")
         await start_game(message)
     else:
-        await message.answer("Ismingiz:")
+        await message.answer("Ismingizni kiriting:")
         await state.set_state(RegistrationStates.waiting_for_name)
 
 
@@ -165,16 +229,18 @@ async def process_group(message: types.Message, state: FSMContext):
     phone = user_data.get('phone')
     group = message.text
 
-    save_user_data(name, surname, phone, group, message.from_user.id)
-
-    await message.answer("Registratsiyadan muvaffaqiyatli utdingiz pasdagi tugmani bosing.")
-    await message.answer("", reply_markup=types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="✅ Boshlash")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
-    ))
+    if not is_user_registered(message.from_user.id):
+        save_user_data(name, surname, phone, group, message.from_user.id)
+        await message.answer("Registratsiya muvafaqiyatli! Endi uyinni boshlasangiz buladi.",
+                             reply_markup=types.ReplyKeyboardMarkup(
+                                 keyboard=[
+                                     [types.KeyboardButton(text="✅ Boshlash")]
+                                 ],
+                                 resize_keyboard=True,
+                                 one_time_keyboard=True
+                             ))
+    else:
+        await message.answer("Siz registratsiya qilib bulgansiz.")
 
     await state.set_state(None)
 
@@ -183,37 +249,38 @@ async def process_group(message: types.Message, state: FSMContext):
 async def start_game(message: types.Message):
     await message.answer("Uyin boshlandi!")
 
-    builder = types.InlineKeyboardMarkup(inline_keyboard=[
-        [
-            types.InlineKeyboardButton(text="A", callback_data="answer_a"),
-            types.InlineKeyboardButton(text="B", callback_data="answer_b"),
-        ],
-        [
-            types.InlineKeyboardButton(text="C", callback_data="answer_c"),
-            types.InlineKeyboardButton(text="D", callback_data="answer_d"),
-        ],
-    ])
+    question = get_random_question()
 
-    await message.answer("Javobni tanlang:", reply_markup=builder)
+    if question:
+        question_id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer = question
+        builder = InlineKeyboardBuilder()
+        builder.row(
+            InlineKeyboardButton(text="A", callback_data=f"answer_{question_id}_a"),
+            InlineKeyboardButton(text="B", callback_data=f"answer_{question_id}_b")
+        )
+        builder.row(
+            InlineKeyboardButton(text="C", callback_data=f"answer_{question_id}_c"),
+            InlineKeyboardButton(text="D", callback_data=f"answer_{question_id}_d")
+        )
+
+        await message.answer(f"{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}",
+                             reply_markup=builder.as_markup())
+    else:
+        await message.answer("Savollar topilmadi.")
 
 
 @dp.callback_query(lambda callback: callback.data.startswith('answer_'))
 async def handle_answer(callback: types.CallbackQuery):
-    global correct_answer
-    user_answer = callback.data
-    username = callback.from_user.username
-    telegram_id = callback.from_user.id
-    if correct_answer:
-        if user_answer == correct_answer:
-            await callback.message.answer("Tugri!")
+    _, question_id, selected_option = callback.data.split('_')
+    question = get_question_by_id(question_id)
 
-            update_google_sheet(username, 1)
+    if question and selected_option == question[-1].lower():
+        await callback.message.answer("Tugri!")
+        update_user_score(callback.from_user.id, 1)
+        update_google_sheet(callback.from_user.username, 1)
 
-            update_user_score(telegram_id, 1)
-        else:
-            await callback.message.answer("Notogri!")
     else:
-        await callback.message.answer("Javoblar hali mavjud emas.")
+        await callback.message.answer("Xato!")
 
     await callback.answer()
 
@@ -222,29 +289,39 @@ async def handle_answer(callback: types.CallbackQuery):
 async def admin_panel(message: types.Message):
     if is_admin(message.from_user.id):
         builder = InlineKeyboardBuilder()
-
         builder.row(
-            InlineKeyboardButton(text="A", callback_data="set_answer_a"),
-            InlineKeyboardButton(text="B", callback_data="set_answer_b")
+            InlineKeyboardButton(text="Admin qushish", callback_data="add_admin"),
+            InlineKeyboardButton(text="Adminlarni kurish", callback_data="show_admins")
         )
         builder.row(
-            InlineKeyboardButton(text="C", callback_data="set_answer_c"),
-            InlineKeyboardButton(text="D", callback_data="set_answer_d")
+            InlineKeyboardButton(text="Savollar qushish", callback_data="upload_questions")
         )
 
-        builder.row(
-            InlineKeyboardButton(text="Добавить админа", callback_data="add_admin"),
-            InlineKeyboardButton(text="Показать админов", callback_data="show_admins")
-        )
-
-        await message.answer("Выберите действие:", reply_markup=builder.as_markup())
+        await message.answer("Tanlang:", reply_markup=builder.as_markup())
     else:
-        await message.answer("У вас нет доступа к панели администратора.")
+        await message.answer("Sizda admin panelga ruxsat yoq")
+
+
+@dp.callback_query(lambda callback: callback.data == 'upload_questions')
+async def handle_upload_questions(callback: types.CallbackQuery):
+    await callback.message.answer("Iltimos savollarni  .docx formatda yuklang")
+    await callback.answer()
+
+
+@dp.message(F.content_type == 'document')
+async def handle_document_upload(message: types.Message):
+    document = message.document
+    os.makedirs('questions', exist_ok=True)
+    file = await message.bot.get_file(document.file_id)
+    file_path = f"questions/{document.file_name}"
+    await message.bot.download_file(file.file_path, file_path)
+    num_questions = add_questions_from_docx(file_path)
+    await message.answer(f"{num_questions} ta savol muvaffaqiyatli yuklandi.")
 
 
 @dp.callback_query(lambda callback: callback.data == 'add_admin')
 async def handle_add_admin(callback: types.CallbackQuery):
-    await callback.message.answer("Введите Telegram ID нового администратора:")
+    await callback.message.answer("Yangi Adminni Telegram ID sini kiriting")
     await callback.answer()
 
 
@@ -253,10 +330,10 @@ async def add_admin_by_id(message: types.Message):
     try:
         new_admin_id = int(message.text)
         add_admin(new_admin_id)
-        await message.answer(f"Администратор с ID {new_admin_id} добавлен.")
+        await message.answer(f"{new_admin_id} ID foydalanuvchi adminlarga qushildi.")
         add_admin(new_admin_id)
     except ValueError:
-        await message.answer("Ошибка: введите корректный числовой Telegram ID.")
+        await message.answer("Xato: Tugri Telegram ID Kiriting")
 
 
 @dp.callback_query(lambda callback: callback.data == 'show_admins')
@@ -264,22 +341,9 @@ async def show_admins(callback: types.CallbackQuery):
     admins = get_all_admins()
     if admins:
         admin_list = "\n".join([str(admin[0]) for admin in admins])
-        await callback.message.answer(f"Список администраторов:\n{admin_list}")
+        await callback.message.answer(f"Adminlar ruyxati:\n{admin_list}")
     else:
-        await callback.message.answer("Администраторы не найдены.")
-    await callback.answer()
-
-
-@dp.callback_query(lambda callback: callback.data.startswith('set_answer_'))
-async def set_correct_answer(callback: types.CallbackQuery):
-    global correct_answer
-
-    if callback.from_user.id == ADMIN_ID:
-        correct_answer = callback.data.replace("set_", "")
-        await callback.message.answer(f"Tugri javob belgilandi {correct_answer.upper()}.")
-    else:
-        await callback.message.answer("Imkoniyatingiz yoq.")
-
+        await callback.message.answer("Adminlar topilmadi.")
     await callback.answer()
 
 
