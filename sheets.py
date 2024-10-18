@@ -22,7 +22,8 @@ def update_google_sheet(username, correct_count):
             sheet.update_cell(cell.row, cell.col + 1, current_count + correct_count)
         else:
             sheet.append_row([username, correct_count])
+        sheet.sort((2, 'des'))
     except gspread.exceptions.WorksheetNotFound:
-        print(f"Worksheet with name {SHEET_NAME} not found.")
+        print(f"Worksheet with name not found.")
     except Exception as e:
         print(f"An error occurred: {e}")
