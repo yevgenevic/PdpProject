@@ -71,6 +71,37 @@ def is_user_registred(telegram_id):
     return result > 0
 
 
+def is_admin(telegram_id):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute("SELECT telegram_id FROM admins WHERE telegram_id = %s", (telegram_id,))
+    result = cursor.fetchone()
+    cursor.close()
+    connection.close()
+    return result is not None
+
+
+def add_admin(telegram_id):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("INSERT INTO admins (telegram_id) VALUES (%s) ON CONFLICT DO NOTHING", (telegram_id,))
+        connection.commit()
+    finally:
+        cursor.close()
+        connection.close()
+
+
+def get_all_admins():
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    cursor.execute("SELECT telegram_id FROM admins")
+    admins = cursor.fetchall()
+    cursor.close()
+    connection.close()
+    return admins
+
+
 @dp.message(Command('ranking'))
 async def show_ranking(message: types.Message):
     connection = get_db_connection()
@@ -137,7 +168,7 @@ async def process_group(message: types.Message, state: FSMContext):
     save_user_data(name, surname, phone, group, message.from_user.id)
 
     await message.answer("Registratsiyadan muvaffaqiyatli utdingiz pasdagi tugmani bosing.")
-    await message.answer("",reply_markup=types.ReplyKeyboardMarkup(
+    await message.answer("", reply_markup=types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="✅ Boshlash")]
         ],
@@ -189,8 +220,9 @@ async def handle_answer(callback: types.CallbackQuery):
 
 @dp.message(Command('admin'))
 async def admin_panel(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
+    if is_admin(message.from_user.id):
         builder = InlineKeyboardBuilder()
+
         builder.row(
             InlineKeyboardButton(text="A", callback_data="set_answer_a"),
             InlineKeyboardButton(text="B", callback_data="set_answer_b")
@@ -200,9 +232,42 @@ async def admin_panel(message: types.Message):
             InlineKeyboardButton(text="D", callback_data="set_answer_d")
         )
 
-        await message.answer("Tugri javob qaysi?:", reply_markup=builder.as_markup())
+        builder.row(
+            InlineKeyboardButton(text="Добавить админа", callback_data="add_admin"),
+            InlineKeyboardButton(text="Показать админов", callback_data="show_admins")
+        )
+
+        await message.answer("Выберите действие:", reply_markup=builder.as_markup())
     else:
-        await message.answer("siz admin emassiz.")
+        await message.answer("У вас нет доступа к панели администратора.")
+
+
+@dp.callback_query(lambda callback: callback.data == 'add_admin')
+async def handle_add_admin(callback: types.CallbackQuery):
+    await callback.message.answer("Введите Telegram ID нового администратора:")
+    await callback.answer()
+
+
+@dp.message()
+async def add_admin_by_id(message: types.Message):
+    try:
+        new_admin_id = int(message.text)
+        add_admin(new_admin_id)
+        await message.answer(f"Администратор с ID {new_admin_id} добавлен.")
+        add_admin(new_admin_id)
+    except ValueError:
+        await message.answer("Ошибка: введите корректный числовой Telegram ID.")
+
+
+@dp.callback_query(lambda callback: callback.data == 'show_admins')
+async def show_admins(callback: types.CallbackQuery):
+    admins = get_all_admins()
+    if admins:
+        admin_list = "\n".join([str(admin[0]) for admin in admins])
+        await callback.message.answer(f"Список администраторов:\n{admin_list}")
+    else:
+        await callback.message.answer("Администраторы не найдены.")
+    await callback.answer()
 
 
 @dp.callback_query(lambda callback: callback.data.startswith('set_answer_'))
