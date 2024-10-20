@@ -40,15 +40,23 @@ def get_db_connection():
 
 
 def save_user_data(name, surname, phone, group, telegram_id):
+    if is_user_registered(telegram_id):
+        print(f"Пользователь с telegram_id={telegram_id} уже зарегистрирован.")
+        return
     connection = get_db_connection()
     cursor = connection.cursor()
-    cursor.execute(
-        "INSERT INTO users (name, surname, phone, group_name, telegram_id) VALUES (%s, %s, %s, %s, %s)",
-        (name, surname, phone, group, telegram_id)
-    )
-    connection.commit()
-    cursor.close()
-    connection.close()
+    try:
+        cursor.execute(
+            "INSERT INTO users (name, surname, phone, group_name, telegram_id) VALUES (%s, %s, %s, %s, %s)",
+            (name, surname, phone, group, telegram_id)
+        )
+        connection.commit()
+        print("Пользователь успешно добавлен.")
+    except psycopg2.Error as e:
+        print(f"Ошибка при добавлении пользователя: {e}")
+    finally:
+        cursor.close()
+        connection.close()
 
 
 def update_user_score(telegram_id, score):
@@ -107,12 +115,23 @@ def get_all_admins():
 def get_random_question():
     connection = get_db_connection()
     cursor = connection.cursor()
-    cursor.execute(
-        "SELECT id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer FROM questions ORDER BY RANDOM() LIMIT 1")
-    question = cursor.fetchone()
-    cursor.close()
-    connection.close()
-    return question
+    try:
+        cursor.execute(
+            "SELECT id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer FROM questions ORDER BY RANDOM() LIMIT 1"
+        )
+        question = cursor.fetchone()
+        if question:
+            if len(question) == 7:
+                return question
+            else:
+                print("Возвращаемый результат не содержит всех необходимых полей.")
+                return None
+    except psycopg2.Error as e:
+        print(f"Ошибка базы данных: {e}")
+    finally:
+        cursor.close()
+        connection.close()
+    return None
 
 
 def get_question_by_id(question_id):
@@ -166,6 +185,51 @@ def add_questions_from_docx(file_path):
     return len(question_data)
 
 
+def initialize_user_questions(user_id):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT 1 FROM users WHERE id = %s", (user_id,))
+        if cursor.fetchone() is None:
+            print(f"User with ID {user_id} not found in 'users' table.")
+            return
+
+        cursor.execute("INSERT INTO user_questions (user_id, question_id, asked) SELECT %s, id, FALSE FROM questions",
+                       (user_id,))
+        connection.commit()
+    except psycopg2.Error as e:
+        print(f"Database error: {e}")
+    finally:
+        cursor.close()
+        connection.close()
+
+
+def has_user_questions_initialized(telegram_id):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT 1 FROM user_questions WHERE user_id = %s LIMIT 1", (telegram_id,))
+        return cursor.fetchone() is not None
+    finally:
+        cursor.close()
+        connection.close()
+
+
+def get_correct_answer(question_id):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT correct_answer FROM questions WHERE id = %s", (question_id,))
+        result = cursor.fetchone()
+        if result:
+            return result[0]
+    except Exception as e:
+        print(f"Error fetching correct answer: {e}")
+    finally:
+        cursor.close()
+        connection.close()
+
+
 @dp.message(Command('ranking'))
 async def show_ranking(message: types.Message):
     connection = get_db_connection()
@@ -191,12 +255,12 @@ async def show_ranking(message: types.Message):
 @dp.message(Command('start'))
 async def start_command(message: types.Message, state: FSMContext):
     telegram_id = message.from_user.id
-    if is_user_registered(telegram_id):
-        await message.answer("siz registratsiya qilib bulgansz!")
-        await start_game(message)
-    else:
+    if not is_user_registered(telegram_id):
         await message.answer("Ismingizni kiriting:")
         await state.set_state(RegistrationStates.waiting_for_name)
+    else:
+        await message.answer("Registratsiyadan utgansiz. Uyin Boshlandi!")
+        await start_game(message)
 
 
 @dp.message(StateFilter(RegistrationStates.waiting_for_name))
@@ -247,42 +311,41 @@ async def process_group(message: types.Message, state: FSMContext):
 
 @dp.message(lambda message: message.text == "✅ Boshlash")
 async def start_game(message: types.Message):
-    await message.answer("Uyin boshlandi!")
-
     question = get_random_question()
-
-    if question:
+    if question and len(question) == 7:
         question_id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer = question
         builder = InlineKeyboardBuilder()
-        builder.row(
-            InlineKeyboardButton(text="A", callback_data=f"answer_{question_id}_a"),
-            InlineKeyboardButton(text="B", callback_data=f"answer_{question_id}_b")
-        )
-        builder.row(
-            InlineKeyboardButton(text="C", callback_data=f"answer_{question_id}_c"),
-            InlineKeyboardButton(text="D", callback_data=f"answer_{question_id}_d")
-        )
-
-        await message.answer(f"{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}",
-                             reply_markup=builder.as_markup())
+        builder.add(InlineKeyboardButton(text="A", callback_data=f"answer_{question_id}_A"))
+        builder.add(InlineKeyboardButton(text="B", callback_data=f"answer_{question_id}_B"))
+        builder.add(InlineKeyboardButton(text="C", callback_data=f"answer_{question_id}_C"))
+        builder.add(InlineKeyboardButton(text="D", callback_data=f"answer_{question_id}_D"))
+        await message.answer(
+            f"{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}",
+            reply_markup=builder.as_markup())
     else:
-        await message.answer("Savollar topilmadi.")
+        await message.answer("Savollar tugadi! Uyin uchun raxmat.")
 
 
 @dp.callback_query(lambda callback: callback.data.startswith('answer_'))
 async def handle_answer(callback: types.CallbackQuery):
-    _, question_id, selected_option = callback.data.split('_')
-    question = get_question_by_id(question_id)
+    try:
+        _, question_id, selected_option = callback.data.split('_')
+        question = get_question_by_id(question_id)
 
-    if question and selected_option == question[-1].lower():
-        await callback.message.answer("Tugri!")
-        update_user_score(callback.from_user.id, 1)
-        update_google_sheet(callback.from_user.username, 1)
-
-    else:
-        await callback.message.answer("Xato!")
-
-    await callback.answer()
+        if question:
+            _, _, _, _, _, _, correct_answer = question
+            if selected_option.lower() == correct_answer.lower():
+                await callback.message.answer("Tugri!")
+                update_user_score(callback.from_user.id, 1)
+                update_google_sheet(callback.from_user.username, 1)
+            else:
+                await callback.message.answer("Notogri!")
+        else:
+            await callback.message.answer("Savol topilmadi.")
+    except Exception as e:
+        await callback.message.answer(f"Xatolik yuz berdi: {e}")
+    finally:
+        await callback.answer()
 
 
 @dp.message(Command('admin'))
