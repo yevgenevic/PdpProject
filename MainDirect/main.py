@@ -264,22 +264,33 @@ async def process_group(message: types.Message, state: FSMContext):
 
 @dp.message(lambda message: message.text == "✅ Boshlash")
 async def start_game(message: types.Message):
-    await message.answer("Uyin boshlandi!", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer("Игра началась!", reply_markup=types.ReplyKeyboardRemove())
+
     question = await get_random_question()
     if question:
         question_id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer = question
         builder = InlineKeyboardBuilder()
-        builder.add(InlineKeyboardButton(text="A", callback_data=f"answer_{question_id}_A"))
-        builder.add(InlineKeyboardButton(text="B", callback_data=f"answer_{question_id}_B"))
-        builder.add(InlineKeyboardButton(text="C", callback_data=f"answer_{question_id}_C"))
-        builder.add(InlineKeyboardButton(text="D", callback_data=f"answer_{question_id}_D"))
+        builder.row(
+            InlineKeyboardButton(text="A", callback_data=f"answer_{question_id}_A"),
+            InlineKeyboardButton(text="B", callback_data=f"answer_{question_id}_B"),
+            InlineKeyboardButton(text="C", callback_data=f"answer_{question_id}_C"),
+            InlineKeyboardButton(text="D", callback_data=f"answer_{question_id}_D")
+        )
+        builder.row(InlineKeyboardButton(text="❌ Cancel", callback_data="cancel"))
+
         await message.answer(
             f"{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}",
-            reply_markup=builder.as_markup(),
-            parse_mode=None
+            reply_markup=builder.as_markup()
         )
     else:
-        await message.answer("Savollar tugadi! Uyin uchun raxmat.", parse_mode=None)
+        await message.answer("Savollar tugadi! Uyin uchun raxmat.")
+
+
+@dp.callback_query(lambda callback: callback.data == "cancel")
+async def cancel_game(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer("Uyin tuxtatildi.", reply_markup=types.ReplyKeyboardRemove())
+    await callback.answer()
 
 
 @dp.callback_query(lambda callback: callback.data.startswith('answer_'))
