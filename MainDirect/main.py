@@ -1,4 +1,5 @@
 import asyncio
+import asyncpg
 import io
 import logging
 import os
@@ -12,8 +13,9 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, BotCommand
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from docx import Document
 from docx import Document
 from sheets import update_google_sheet
 
@@ -30,7 +32,17 @@ class RegistrationStates(StatesGroup):
     waiting_for_group = State()
 
 
-import asyncpg
+class AdminStates(StatesGroup):
+    waiting_for_admin_id = State()
+
+
+async def set_commands(bot: Bot):
+    commands = [
+        BotCommand(command="/start", description="Start the bot"),
+        BotCommand(command="/ranking", description="Show leaderboard"),
+        BotCommand(command="/admin", description="Admin panel"),
+    ]
+    await bot.set_my_commands(commands)
 
 
 async def get_db_connection():
@@ -116,11 +128,6 @@ async def get_question_by_id(question_id):
         return await conn.fetchrow("SELECT * FROM questions WHERE id = $1", question_id)
     finally:
         await conn.close()
-
-
-import asyncpg
-from docx import Document
-import os
 
 
 async def add_questions_from_docx(file_path):
@@ -239,14 +246,16 @@ async def process_group(message: types.Message, state: FSMContext):
     registered = await is_user_registered(message.from_user.id)
     if not registered:
         await save_user_data(name, surname, phone, group, message.from_user.id)
-        await message.answer("Registratsiya muvafaqiyatli! Endi uyinni boshlasangiz buladi.",
-                             reply_markup=types.ReplyKeyboardMarkup(
-                                 keyboard=[
-                                     [types.KeyboardButton(text="✅ Boshlash")]
-                                 ],
-                                 resize_keyboard=True,
-                                 one_time_keyboard=True
-                             ))
+        await message.answer(
+            "Registratsiya muvafaqiyatli! Endi uyinni boshlasangiz buladi.",
+            reply_markup=types.ReplyKeyboardMarkup(
+                keyboard=[
+                    [types.KeyboardButton(text="✅ Boshlash")]
+                ],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+        )
     else:
         await message.answer("Siz registratsiya qilib bulgansiz.")
 
@@ -255,6 +264,7 @@ async def process_group(message: types.Message, state: FSMContext):
 
 @dp.message(lambda message: message.text == "✅ Boshlash")
 async def start_game(message: types.Message):
+    await message.answer("Uyin boshlandi!", reply_markup=types.ReplyKeyboardRemove())
     question = await get_random_question()
     if question:
         question_id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer = question
@@ -265,9 +275,11 @@ async def start_game(message: types.Message):
         builder.add(InlineKeyboardButton(text="D", callback_data=f"answer_{question_id}_D"))
         await message.answer(
             f"{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}",
-            reply_markup=builder.as_markup())
+            reply_markup=builder.as_markup(),
+            parse_mode=None
+        )
     else:
-        await message.answer("Savollar tugadi! Uyin uchun raxmat.")
+        await message.answer("Savollar tugadi! Uyin uchun raxmat.", parse_mode=None)
 
 
 @dp.callback_query(lambda callback: callback.data.startswith('answer_'))
@@ -322,17 +334,19 @@ async def handle_upload_questions(callback: types.CallbackQuery):
 
 
 @dp.callback_query(lambda callback: callback.data == 'add_admin')
-async def handle_add_admin(callback: types.CallbackQuery):
+async def handle_add_admin(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("Yangi Adminni Telegram ID sini kiriting")
+    await state.set_state(AdminStates.waiting_for_admin_id)
     await callback.answer()
 
 
-@dp.message()
-async def add_admin_by_id(message: types.Message):
+@dp.message(StateFilter(AdminStates.waiting_for_admin_id))
+async def add_admin_by_id(message: types.Message, state: FSMContext):
     try:
         new_admin_id = int(message.text)
         await add_admin(new_admin_id)
         await message.answer(f"{new_admin_id} ID foydalanuvchi adminlarga qushildi.")
+        await state.clear()
     except ValueError:
         await message.answer("Xato: Tugri Telegram ID Kiriting")
 
@@ -351,6 +365,7 @@ async def show_admins(callback: types.CallbackQuery):
 async def main():
     bot = Bot(token="7611301913:AAExAJXVMmrOdZ6vDzz9IQejkEJYCZM6D7g",
               default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    await set_commands(bot)
     await dp.start_polling(bot)
 
 
