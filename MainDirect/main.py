@@ -209,7 +209,6 @@ async def start_command(message: types.Message, state: FSMContext):
         await message.answer("Ismingizni kiriting:")
         await state.set_state(RegistrationStates.waiting_for_name)
     else:
-        await message.answer("Registratsiyadan utgansiz. Uyin Boshlandi!")
         await start_game(message)
 
 
@@ -277,19 +276,16 @@ async def start_game(message: types.Message):
             InlineKeyboardButton(text="D", callback_data=f"answer_{question_id}_D")
         )
         builder.row(InlineKeyboardButton(text="❌ Cancel", callback_data="cancel"))
-
-        await message.answer(
-            f"{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}",
-            reply_markup=builder.as_markup()
-        )
+        sanitized_text = f"{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}"
+        await message.answer(sanitized_text, reply_markup=builder.as_markup(), parse_mode=None)
     else:
         await message.answer("Savollar tugadi! Uyin uchun raxmat.")
 
 
-@dp.callback_query(lambda callback: callback.data == "cancel")
-async def cancel_game(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.answer("Uyin tuxtatildi.", reply_markup=types.ReplyKeyboardRemove())
+@dp.callback_query(lambda callback: callback.data == 'cancel')
+async def cancel_game(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await callback.message.answer("Uyin tuxtatildi.")
     await callback.answer()
 
 
@@ -303,11 +299,8 @@ async def handle_answer(callback: types.CallbackQuery):
         if question:
             _, _, _, _, _, _, correct_answer = question
             if selected_option.lower() == correct_answer.lower():
-                await callback.message.answer("Tugri!")
                 await update_user_score(callback.from_user.id, 1)
                 await update_google_sheet(callback.from_user.username, 1)
-            else:
-                await callback.message.answer("Xato!")
 
             await callback.message.delete()
 
