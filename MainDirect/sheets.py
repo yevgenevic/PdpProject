@@ -27,10 +27,26 @@ async def update_google_sheet(username, correct_count):
     try:
         sheet = await connect_to_google_sheets()
         cell = await sheet.find(username)
+
         if cell:
+            # Обновляем количество правильных ответов
             current_count = int((await sheet.cell(cell.row, cell.col + 1)).value)
             await sheet.update_cell(cell.row, cell.col + 1, current_count + correct_count)
         else:
+            # Добавляем новую запись
             await sheet.append_row([username, correct_count])
+
+        # Получаем все данные с листа
+        all_data = await sheet.get_all_values()
+        # Пропускаем первую строку, если это заголовки
+        sorted_data = sorted(all_data[1:], key=lambda x: int(x[1]), reverse=True)
+
+        # Очищаем лист и записываем отсортированные данные
+        await sheet.clear()
+        await sheet.append_row(['Username', 'Score'])  # Если нужна строка заголовков
+        for row in sorted_data:
+            await sheet.append_row(row)
     except Exception as e:
         print(f"An error occurred: {e}")
+
+

@@ -292,6 +292,8 @@ async def cancel_game(callback: types.CallbackQuery):
 @dp.callback_query(lambda callback: callback.data.startswith('answer_'))
 async def handle_answer(callback: types.CallbackQuery):
     try:
+        await callback.answer()
+
         action, question_id_str, selected_option = callback.data.split('_')
         question_id = int(question_id_str)
         question = await get_question_by_id(question_id)
@@ -299,19 +301,16 @@ async def handle_answer(callback: types.CallbackQuery):
         if question:
             _, _, _, _, _, _, correct_answer = question
             if selected_option.lower() == correct_answer.lower():
+                await callback.message.delete()
                 await update_user_score(callback.from_user.id, 1)
                 await update_google_sheet(callback.from_user.username, 1)
-
-            await callback.message.delete()
-
+            else:
+                await callback.message.delete()
             await start_game(callback.message)
-
         else:
             await callback.message.answer("Savol topilmadi.")
     except Exception as e:
-        await callback.message.answer(f"Xato: {e}")
-    finally:
-        await callback.answer()
+        print(f"An error occurred: {e}")
 
 
 @dp.message(Command('admin'))
