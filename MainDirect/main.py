@@ -2,9 +2,6 @@ import asyncio
 import asyncpg
 import io
 import logging
-import os
-import psycopg2
-import random
 import sys
 from aiogram import Bot, Dispatcher
 from aiogram import types, F
@@ -17,6 +14,7 @@ from aiogram.types import InlineKeyboardButton, BotCommand
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from docx import Document
 from sheets import update_google_sheet
+from datetime import datetime, timedelta
 
 dp = Dispatcher()
 
@@ -91,7 +89,8 @@ async def is_user_registered(telegram_id):
 async def is_admin(telegram_id):
     conn = await get_db_connection()
     try:
-        return await conn.fetchval("SELECT 1 FROM admins WHERE telegram_id = $1", telegram_id) is not None
+        result = await conn.fetchval("SELECT 1 FROM admins WHERE telegram_id = $1", telegram_id)
+        return result is not None
     finally:
         await conn.close()
 
@@ -125,6 +124,42 @@ async def get_question_by_id(question_id):
     conn = await get_db_connection()
     try:
         return await conn.fetchrow("SELECT * FROM questions WHERE id = $1", question_id)
+    finally:
+        await conn.close()
+
+
+async def check_user_time(user_id: int, message: types.Message):
+    end_time = user_end_times.get(user_id)
+    if end_time and datetime.now() >= end_time:
+        await message.answer("⏰ Время на тестирование истекло!")
+        return False
+    return True
+
+
+async def set_user_end_time(user_id, end_time):
+    conn = await get_db_connection()
+    try:
+        await conn.execute(
+            """
+            INSERT INTO user_game_times (user_id, end_time)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id)
+            DO UPDATE SET end_time = EXCLUDED.end_time
+            """,
+            user_id, end_time
+        )
+    finally:
+        await conn.close()
+
+
+async def get_user_end_time(user_id):
+    conn = await get_db_connection()
+    try:
+        end_time = await conn.fetchval(
+            "SELECT end_time FROM user_game_times WHERE user_id = $1",
+            user_id
+        )
+        return end_time
     finally:
         await conn.close()
 
@@ -260,13 +295,36 @@ async def process_group(message: types.Message, state: FSMContext):
     await state.set_state(None)
 
 
+user_end_times = {}
+
+
 @dp.message(lambda message: message.text == "✅ Boshlash")
 async def start_game(message: types.Message):
+    user_id = message.from_user.id
+
+    end_time = await get_user_end_time(user_id)
+    if not end_time:
+        await message.answer("Время для теста не установлено. Пожалуйста, обратитесь к администратору.")
+        return
+
+    remaining_time = end_time - datetime.now()
+    if remaining_time.total_seconds() <= 0:
+        await message.answer("⏰ Время для теста истекло!")
+        return
+
     await message.answer("Игра началась!", reply_markup=types.ReplyKeyboardRemove())
 
+    await send_next_question(message, remaining_time)
+
+
+async def send_next_question(message, remaining_time):
     question = await get_random_question()
     if question:
         question_id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer = question
+
+        minutes, seconds = divmod(int(remaining_time.total_seconds()), 60)
+        time_left_text = f"Оставшееся время: {minutes} мин {seconds} сек."
+
         builder = InlineKeyboardBuilder()
         builder.row(
             InlineKeyboardButton(text="A", callback_data=f"answer_{question_id}_A"),
@@ -275,10 +333,46 @@ async def start_game(message: types.Message):
             InlineKeyboardButton(text="D", callback_data=f"answer_{question_id}_D")
         )
         builder.row(InlineKeyboardButton(text="❌ Cancel", callback_data="cancel"))
-        sanitized_text = f"{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}"
+
+        sanitized_text = f"{time_left_text}\n\n{question_text}\nA: {answer_a}\nB: {answer_b}\nC: {answer_c}\nD: {answer_d}"
         await message.answer(sanitized_text, reply_markup=builder.as_markup(), parse_mode=None)
     else:
         await message.answer("Savollar tugadi! Uyin uchun raxmat.")
+
+
+@dp.message(Command("set_time"))
+async def set_game_time(message: types.Message):
+    try:
+        if not await is_admin(message.from_user.id):
+            await message.answer("У вас нет прав для установки времени.")
+            return
+
+        command_parts = message.text.split()
+        if len(command_parts) < 2:
+            await message.answer("Пожалуйста, укажите время в формате '1h' для часов или '1m' для минут.")
+            return
+
+        time_value = command_parts[1]
+        if time_value.endswith('h'):
+            hours = int(time_value[:-1])
+            game_end_time = datetime.now() + timedelta(hours=hours)
+            duration_text = f"{hours} час(ов)"
+        elif time_value.endswith('m'):
+            minutes = int(time_value[:-1])
+            game_end_time = datetime.now() + timedelta(minutes=minutes)
+            duration_text = f"{minutes} минут(ы)"
+        else:
+            await message.answer("Пожалуйста, укажите время в формате '1h' для часов или '1m' для минут.")
+            return
+
+        await set_user_end_time(message.from_user.id, game_end_time)
+        await message.answer(f"⏰ Время для игры установлено на {duration_text}.", parse_mode="HTML")
+    except ValueError as e:
+        await message.answer(
+            f"Ошибка: некорректный формат времени. Используйте '1h' для часов или '1m' для минут.\nПодробнее: {e}")
+    except Exception as e:
+        await message.answer(f"Произошла ошибка: {e}")
+        print(f"An error occurred while setting game time: {e}")
 
 
 @dp.callback_query(lambda callback: callback.data == 'cancel')
@@ -290,6 +384,14 @@ async def cancel_game(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda callback: callback.data.startswith('answer_'))
 async def handle_answer(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+
+    end_time = await get_user_end_time(user_id)
+    if end_time and datetime.now() > end_time:
+        await callback.message.answer("⏰ Время истекло! Игра остановлена.")
+        await callback.message.delete()
+        return
+
     try:
         await callback.answer()
 
@@ -299,13 +401,14 @@ async def handle_answer(callback: types.CallbackQuery):
 
         if question:
             _, _, _, _, _, _, correct_answer = question
+            await callback.message.delete()
+
             if selected_option.lower() == correct_answer.lower():
-                await callback.message.delete()
-                await update_user_score(callback.from_user.id, 1)
+                await update_user_score(user_id, 1)
                 await update_google_sheet(callback.from_user.username, 1)
-            else:
-                await callback.message.delete()
-            await start_game(callback.message)
+
+            remaining_time = end_time - datetime.now()
+            await send_next_question(callback.message, remaining_time)
         else:
             await callback.message.answer("Savol topilmadi.")
     except Exception as e:

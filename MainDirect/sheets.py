@@ -1,5 +1,4 @@
 import gspread_asyncio
-import os
 from oauth2client.service_account import ServiceAccountCredentials
 
 SPREADSHEET_ID = '1n-2xd1BOjZdg3kuy2pdg0t_MTyjJ87BV5Gomk3Xsje0'
@@ -29,24 +28,23 @@ async def update_google_sheet(username, correct_count):
         cell = await sheet.find(username)
 
         if cell:
-            # Обновляем количество правильных ответов
-            current_count = int((await sheet.cell(cell.row, cell.col + 1)).value)
+            current_count_value = await sheet.cell(cell.row, cell.col + 1)
+            current_count = 0
+            if current_count_value.value:
+                current_count = int(current_count_value.value)
             await sheet.update_cell(cell.row, cell.col + 1, current_count + correct_count)
         else:
-            # Добавляем новую запись
             await sheet.append_row([username, correct_count])
 
-        # Получаем все данные с листа
         all_data = await sheet.get_all_values()
-        # Пропускаем первую строку, если это заголовки
-        sorted_data = sorted(all_data[1:], key=lambda x: int(x[1]), reverse=True)
-
-        # Очищаем лист и записываем отсортированные данные
+        sorted_data = sorted(
+            [row for row in all_data[1:] if row[1].isdigit()],
+            key=lambda x: int(x[1]),
+            reverse=True
+        )
         await sheet.clear()
-        await sheet.append_row(['Username', 'Score'])  # Если нужна строка заголовков
+        await sheet.append_row(['Username', 'Score'])
         for row in sorted_data:
             await sheet.append_row(row)
     except Exception as e:
         print(f"An error occurred: {e}")
-
-
