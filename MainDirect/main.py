@@ -136,18 +136,17 @@ async def check_user_time(user_id: int, message: types.Message):
     return True
 
 
-async def set_user_end_time(user_id, end_time):
+async def set_global_end_time(end_time):
     conn = await get_db_connection()
     try:
-        await conn.execute(
-            """
-            INSERT INTO user_game_times (user_id, end_time)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id)
-            DO UPDATE SET end_time = EXCLUDED.end_time
-            """,
-            user_id, end_time
-        )
+        # Use a default user_id for global times, like 0 or -1
+        global_user_id = 0
+        await conn.execute("""
+            INSERT INTO user_game_times (user_id, end_time, is_global)
+            VALUES ($1, $2, TRUE)
+            ON CONFLICT (is_global) DO UPDATE
+            SET end_time = EXCLUDED.end_time
+        """, global_user_id, end_time)
     finally:
         await conn.close()
 
@@ -156,9 +155,13 @@ async def get_user_end_time(user_id):
     conn = await get_db_connection()
     try:
         end_time = await conn.fetchval(
-            "SELECT end_time FROM user_game_times WHERE user_id = $1",
-            user_id
+            "SELECT end_time FROM user_game_times WHERE is_global = TRUE LIMIT 1"
         )
+        if end_time is None:
+            end_time = await conn.fetchval(
+                "SELECT end_time FROM user_game_times WHERE user_id = $1",
+                user_id
+            )
         return end_time
     finally:
         await conn.close()
@@ -318,10 +321,17 @@ async def start_game(message: types.Message):
 
 
 async def send_next_question(message, remaining_time):
+    # Check if time has expired
+    if remaining_time.total_seconds() <= 0:
+        await message.answer("⏰ Время истекло! Игра остановлена.")
+        return
+
+    # Proceed if time is valid
     question = await get_random_question()
     if question:
         question_id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer = question
 
+        # Format the remaining time correctly
         minutes, seconds = divmod(int(remaining_time.total_seconds()), 60)
         time_left_text = f"Оставшееся время: {minutes} мин {seconds} сек."
 
@@ -340,6 +350,7 @@ async def send_next_question(message, remaining_time):
         await message.answer("Savollar tugadi! Uyin uchun raxmat.")
 
 
+# Simplified set_time command handler with better validation and error handling
 @dp.message(Command("set_time"))
 async def set_game_time(message: types.Message):
     try:
@@ -348,8 +359,8 @@ async def set_game_time(message: types.Message):
             return
 
         command_parts = message.text.split()
-        if len(command_parts) < 2:
-            await message.answer("Пожалуйста, укажите время в формате '1h' для часов или '1m' для минут.")
+        if len(command_parts) != 2:
+            await message.answer("Укажите время в формате '1h' для часов или '10m' для минут.")
             return
 
         time_value = command_parts[1]
@@ -362,17 +373,16 @@ async def set_game_time(message: types.Message):
             game_end_time = datetime.now() + timedelta(minutes=minutes)
             duration_text = f"{minutes} минут(ы)"
         else:
-            await message.answer("Пожалуйста, укажите время в формате '1h' для часов или '1m' для минут.")
+            await message.answer("Некорректный формат времени. Пример: '/set_time 1h' или '/set_time 30m'.")
             return
 
-        await set_user_end_time(message.from_user.id, game_end_time)
+        await set_global_end_time(game_end_time)
         await message.answer(f"⏰ Время для игры установлено на {duration_text}.", parse_mode="HTML")
     except ValueError as e:
-        await message.answer(
-            f"Ошибка: некорректный формат времени. Используйте '1h' для часов или '1m' для минут.\nПодробнее: {e}")
+        await message.answer(f"Ошибка: некорректный формат времени.\nПодробнее: {e}")
     except Exception as e:
         await message.answer(f"Произошла ошибка: {e}")
-        print(f"An error occurred while setting game time: {e}")
+        logging.error(f"An error occurred while setting game time: {e}")
 
 
 @dp.callback_query(lambda callback: callback.data == 'cancel')
