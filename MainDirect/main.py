@@ -62,7 +62,7 @@ async def save_user_data(name, surname, phone, group, telegram_id):
             "INSERT INTO users (name, surname, phone, group_name, telegram_id) VALUES ($1, $2, $3, $4, $5)",
             name, surname, phone, group, telegram_id
         )
-        print("Пользователь успешно добавлен.")
+        print("Foydalanuvchi muvaffaqiyatli qo'shildi.")
     finally:
         await conn.close()
 
@@ -131,7 +131,7 @@ async def get_question_by_id(question_id):
 async def check_user_time(user_id: int, message: types.Message):
     end_time = user_end_times.get(user_id)
     if end_time and datetime.now() >= end_time:
-        await message.answer("⏰ Время на тестирование истекло!")
+        await message.answer("⏰ Sinov muddati tugadi!")
         return False
     return True
 
@@ -307,15 +307,15 @@ async def start_game(message: types.Message):
 
     end_time = await get_user_end_time(user_id)
     if not end_time:
-        await message.answer("Время для теста не установлено. Пожалуйста, обратитесь к администратору.")
+        await message.answer("Sinov uchun belgilangan vaqt yo'q. Iltimos, administratoringizga murojaat qiling.")
         return
 
     remaining_time = end_time - datetime.now()
     if remaining_time.total_seconds() <= 0:
-        await message.answer("⏰ Время для теста истекло!")
+        await message.answer("⏰ Sinov muddati tugadi!")
         return
 
-    await message.answer("Игра началась!", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer("O'yin boshlandi!", reply_markup=types.ReplyKeyboardRemove())
 
     await send_next_question(message, remaining_time)
 
@@ -323,7 +323,7 @@ async def start_game(message: types.Message):
 async def send_next_question(message, remaining_time):
     # Check if time has expired
     if remaining_time.total_seconds() <= 0:
-        await message.answer("⏰ Время истекло! Игра остановлена.")
+        await message.answer("⏰ Vaqt bo'ldi! Oʻyin toʻxtadi.")
         return
 
     # Proceed if time is valid
@@ -333,7 +333,7 @@ async def send_next_question(message, remaining_time):
 
         # Format the remaining time correctly
         minutes, seconds = divmod(int(remaining_time.total_seconds()), 60)
-        time_left_text = f"Оставшееся время: {minutes} мин {seconds} сек."
+        time_left_text = f"Qolgan vaqt: {minutes} min {seconds} sek."
 
         builder = InlineKeyboardBuilder()
         builder.row(
@@ -355,40 +355,40 @@ async def send_next_question(message, remaining_time):
 async def set_game_time(message: types.Message):
     try:
         if not await is_admin(message.from_user.id):
-            await message.answer("У вас нет прав для установки времени.")
+            await message.answer("Vaqtni belgilashga ruxsatingiz yo'q.")
             return
 
         command_parts = message.text.split()
         if len(command_parts) != 2:
-            await message.answer("Укажите время в формате '1h' для часов или '10m' для минут.")
+            await message.answer("Vaqtni soatlar uchun '1' yoki daqiqalar uchun '10m' formatida kiriting.")
             return
 
         time_value = command_parts[1]
         if time_value.endswith('h'):
             hours = int(time_value[:-1])
             game_end_time = datetime.now() + timedelta(hours=hours)
-            duration_text = f"{hours} час(ов)"
+            duration_text = f"{hours} soat"
         elif time_value.endswith('m'):
             minutes = int(time_value[:-1])
             game_end_time = datetime.now() + timedelta(minutes=minutes)
-            duration_text = f"{minutes} минут(ы)"
+            duration_text = f"{minutes} minut"
         else:
-            await message.answer("Некорректный формат времени. Пример: '/set_time 1h' или '/set_time 30m'.")
+            await message.answer("Vaqt formati noto‘g‘ri. Misol: '/set_time 1h' yoki '/set_time 30m'.")
             return
 
         await set_global_end_time(game_end_time)
-        await message.answer(f"⏰ Время для игры установлено на {duration_text}.", parse_mode="HTML")
+        await message.answer(f"⏰ O'yin vaqti belgilangan {duration_text}.", parse_mode="HTML")
     except ValueError as e:
-        await message.answer(f"Ошибка: некорректный формат времени.\nПодробнее: {e}")
+        await message.answer(f"Xato: noto'g'ri vaqt formati.\nBatafsil ma'lumot: {e}")
     except Exception as e:
-        await message.answer(f"Произошла ошибка: {e}")
-        logging.error(f"An error occurred while setting game time: {e}")
+        await message.answer(f"Xatolik yuz berdi: {e}")
+        logging.error(f"O'yin vaqtini belgilashda xatolik yuz berdi: {e}")
 
 
 @dp.callback_query(lambda callback: callback.data == 'cancel')
 async def cancel_game(callback: types.CallbackQuery):
     await callback.message.delete()
-    await callback.message.answer("Uyin tuxtatildi.")
+    await callback.message.answer("Uyin to'xtatildi.")
     await callback.answer()
 
 
@@ -398,7 +398,7 @@ async def handle_answer(callback: types.CallbackQuery):
 
     end_time = await get_user_end_time(user_id)
     if end_time and datetime.now() > end_time:
-        await callback.message.answer("⏰ Время истекло! Игра остановлена.")
+        await callback.message.answer("⏰ Vaqt bo'ldi! Oʻyin toʻxtadi.")
         await callback.message.delete()
         return
 
