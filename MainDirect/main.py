@@ -139,7 +139,6 @@ async def check_user_time(user_id: int, message: types.Message):
 async def set_global_end_time(end_time):
     conn = await get_db_connection()
     try:
-        # Use a default user_id for global times, like 0 or -1
         global_user_id = 0
         await conn.execute("""
             INSERT INTO user_game_times (user_id, end_time, is_global)
@@ -321,17 +320,14 @@ async def start_game(message: types.Message):
 
 
 async def send_next_question(message, remaining_time):
-    # Check if time has expired
     if remaining_time.total_seconds() <= 0:
         await message.answer("⏰ Время истекло! Игра остановлена.")
         return
 
-    # Proceed if time is valid
     question = await get_random_question()
     if question:
         question_id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer = question
 
-        # Format the remaining time correctly
         minutes, seconds = divmod(int(remaining_time.total_seconds()), 60)
         time_left_text = f"Оставшееся время: {minutes} мин {seconds} сек."
 
@@ -350,7 +346,6 @@ async def send_next_question(message, remaining_time):
         await message.answer("Savollar tugadi! Uyin uchun raxmat.")
 
 
-# Simplified set_time command handler with better validation and error handling
 @dp.message(Command("set_time"))
 async def set_game_time(message: types.Message):
     try:
