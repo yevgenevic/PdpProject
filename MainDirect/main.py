@@ -35,23 +35,21 @@ async def home(request: Request):
 
 
 async def get_ranking():
-    # Ulanish ochiladi
     conn = await get_db_connection()
     try:
-        query = """
+        query = """ 
         SELECT name, surname, score
         FROM users
         ORDER BY score DESC
-        LIMIT 10;
+        LIMIT 10;  
         """
         rows = await conn.fetch(query)
-        # JSON formatda qaytaradi
         return [
             {"name": row["name"], "surname": row["surname"], "score": row["score"]}
             for row in rows
         ]
     finally:
-        # Ulanishni yopadi
+
         await conn.close()
 
 
@@ -62,7 +60,7 @@ async def websocket_endpoint(websocket: WebSocket):
         try:
             ranking = await get_ranking()
             await websocket.send_json(ranking)
-            await asyncio.sleep(5)  # Har 5 soniyada yangilash
+            await asyncio.sleep(5)
         except Exception as e:
             print(f"WebSocket error: {e}")
             break
@@ -105,7 +103,7 @@ async def save_user_data(name, surname, phone, group, telegram_id):
     conn = await get_db_connection()
     try:
         await conn.execute(
-            "INSERT INTO users (name, surname, phone, group_name, telegram_id) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO users (name, surname, phone, group_name, telegram_id) VALUES ($1, $2, $3, $4, $5)",  # noqa
             name, surname, phone, group, telegram_id
         )
         print("Пользователь успешно добавлен.")
@@ -117,7 +115,7 @@ async def update_user_score(telegram_id, score):
     conn = await get_db_connection()
     try:
         await conn.execute(
-            "UPDATE users SET score = score + $1 WHERE telegram_id = $2",
+            "UPDATE users SET score = score + $1 WHERE telegram_id = $2",  # noqa
             score, telegram_id
         )
     finally:
@@ -127,7 +125,7 @@ async def update_user_score(telegram_id, score):
 async def is_user_registered(telegram_id):
     conn = await get_db_connection()
     try:
-        return await conn.fetchval("SELECT 1 FROM users WHERE telegram_id = $1", telegram_id) is not None
+        return await conn.fetchval("SELECT 1 FROM users WHERE telegram_id = $1", telegram_id) is not None  # noqa
     finally:
         await conn.close()
 
@@ -135,7 +133,7 @@ async def is_user_registered(telegram_id):
 async def is_admin(telegram_id):
     conn = await get_db_connection()
     try:
-        result = await conn.fetchval("SELECT 1 FROM admins WHERE telegram_id = $1", telegram_id)
+        result = await conn.fetchval("SELECT 1 FROM admins WHERE telegram_id = $1", telegram_id)  # noqa
         return result is not None
     finally:
         await conn.close()
@@ -144,7 +142,7 @@ async def is_admin(telegram_id):
 async def add_admin(telegram_id):
     conn = await get_db_connection()
     try:
-        await conn.execute("INSERT INTO admins (telegram_id) VALUES ($1) ON CONFLICT DO NOTHING", telegram_id)
+        await conn.execute("INSERT INTO admins (telegram_id) VALUES ($1) ON CONFLICT DO NOTHING", telegram_id)  # noqa
     finally:
         await conn.close()
 
@@ -152,7 +150,7 @@ async def add_admin(telegram_id):
 async def get_all_admins():
     conn = await get_db_connection()
     try:
-        return await conn.fetch("SELECT telegram_id FROM admins")
+        return await conn.fetch("SELECT telegram_id FROM admins")  # noqa
     finally:
         await conn.close()
 
@@ -161,7 +159,7 @@ async def get_random_question():
     conn = await get_db_connection()
     try:
         return await conn.fetchrow(
-            "SELECT id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer FROM questions ORDER BY RANDOM() LIMIT 1")
+            "SELECT id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer FROM questions ORDER BY RANDOM() LIMIT 1")  # noqa
     finally:
         await conn.close()
 
@@ -169,7 +167,7 @@ async def get_random_question():
 async def get_question_by_id(question_id):
     conn = await get_db_connection()
     try:
-        return await conn.fetchrow("SELECT * FROM questions WHERE id = $1", question_id)
+        return await conn.fetchrow("SELECT * FROM questions WHERE id = $1", question_id)  # noqa
     finally:
         await conn.close()
 
@@ -187,10 +185,10 @@ async def set_global_end_time(end_time):
     try:
         global_user_id = 0
         await conn.execute("""
-            INSERT INTO user_game_times (user_id, end_time, is_global)
+            INSERT INTO user_game_times (user_id, end_time, is_global) 
             VALUES ($1, $2, TRUE)
             ON CONFLICT (is_global) DO UPDATE
-            SET end_time = EXCLUDED.end_time
+            SET end_time = EXCLUDED.end_time 
         """, global_user_id, end_time)
     finally:
         await conn.close()
@@ -200,11 +198,11 @@ async def get_user_end_time(user_id):
     conn = await get_db_connection()
     try:
         end_time = await conn.fetchval(
-            "SELECT end_time FROM user_game_times WHERE is_global = TRUE LIMIT 1"
+            "SELECT end_time FROM user_game_times WHERE is_global = TRUE LIMIT 1"  # noqa
         )
         if end_time is None:
             end_time = await conn.fetchval(
-                "SELECT end_time FROM user_game_times WHERE user_id = $1",
+                "SELECT end_time FROM user_game_times WHERE user_id = $1",  # noqa
                 user_id
             )
         return end_time
@@ -239,7 +237,7 @@ async def add_questions_from_docx(file_path):
                 print("Executing insert with:", question)
                 await conn.execute("""
                     INSERT INTO questions (question_text, answer_a, answer_b, answer_c, answer_d, correct_answer)
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    VALUES ($1, $2, $3, $4, $5, $6) 
                 """, question['question'], question['a'], question['b'], question['c'], question['d'],
                                    question['correct'])
             except Exception as e:
@@ -268,7 +266,7 @@ async def show_ranking(message: types.Message):
     conn = await get_db_connection()
     try:
         ranking = await conn.fetch(
-            "SELECT name, surname, score FROM users ORDER BY score DESC"
+            "SELECT name, surname, score FROM users ORDER BY score DESC"  # noqa
         )
 
         if not ranking:
@@ -352,22 +350,22 @@ async def start_game(message: types.Message):
 
     end_time = await get_user_end_time(user_id)
     if not end_time:
-        await message.answer("Время для теста не установлено. Пожалуйста, обратитесь к администратору.")
+        await message.answer("Test uchun vaqt qoyilmadi adminga murojat qiling")
         return
 
     remaining_time = end_time - datetime.now()
     if remaining_time.total_seconds() <= 0:
-        await message.answer("⏰ Время для теста истекло!")
+        await message.answer("⏰ Test vaqti tugadi!")
         return
 
-    await message.answer("Игра началась!", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer("Uyin boshlandi!", reply_markup=types.ReplyKeyboardRemove())
 
     await send_next_question(message, remaining_time)
 
 
 async def send_next_question(message, remaining_time):
     if remaining_time.total_seconds() <= 0:
-        await message.answer("⏰ Время истекло! Игра остановлена.")
+        await message.answer("⏰ Vaqt tugadi, Uyin tuxtatildi.")
         return
 
     question = await get_random_question()
@@ -375,7 +373,7 @@ async def send_next_question(message, remaining_time):
         question_id, question_text, answer_a, answer_b, answer_c, answer_d, correct_answer = question
 
         minutes, seconds = divmod(int(remaining_time.total_seconds()), 60)
-        time_left_text = f"Оставшееся время: {minutes} мин {seconds} сек."
+        time_left_text = f"Qolgan vaqt: {minutes} min {seconds} sek."
 
         builder = InlineKeyboardBuilder()
         builder.row(
@@ -396,33 +394,33 @@ async def send_next_question(message, remaining_time):
 async def set_game_time(message: types.Message):
     try:
         if not await is_admin(message.from_user.id):
-            await message.answer("У вас нет прав для установки времени.")
+            await message.answer("Szida vaqt qoyishga ruxsat yoq.")
             return
 
         command_parts = message.text.split()
         if len(command_parts) != 2:
-            await message.answer("Укажите время в формате '1h' для часов или '10m' для минут.")
+            await message.answer("vaqtni soat uchun '1h' formatida minutlar uchun '10m' formatida yozing.")  #
             return
 
         time_value = command_parts[1]
         if time_value.endswith('h'):
             hours = int(time_value[:-1])
             game_end_time = datetime.now() + timedelta(hours=hours)
-            duration_text = f"{hours} час(ов)"
+            duration_text = f"{hours} soat(lar)"
         elif time_value.endswith('m'):
             minutes = int(time_value[:-1])
             game_end_time = datetime.now() + timedelta(minutes=minutes)
-            duration_text = f"{minutes} минут(ы)"
+            duration_text = f"{minutes} minut(lar)"
         else:
-            await message.answer("Некорректный формат времени. Пример: '/set_time 1h' или '/set_time 30m'.")
+            await message.answer("Xato for,atdagi vaqt. misol uchun : '/set_time 1h' yoki '/set_time 30m'.")
             return
 
         await set_global_end_time(game_end_time)
-        await message.answer(f"⏰ Время для игры установлено на {duration_text}.", parse_mode="HTML")
+        await message.answer(f"⏰ Uyin uchun vaqt {duration_text} qoyildi.", parse_mode="HTML")
     except ValueError as e:
-        await message.answer(f"Ошибка: некорректный формат времени.\nПодробнее: {e}")
+        await message.answer(f"xatolik yuz berdi.\nПодробнее: {e}")
     except Exception as e:
-        await message.answer(f"Произошла ошибка: {e}")
+        await message.answer(f"Xatolik yuz berdi а: {e}")
         logging.error(f"An error occurred while setting game time: {e}")
 
 
@@ -439,7 +437,7 @@ async def handle_answer(callback: types.CallbackQuery):
 
     end_time = await get_user_end_time(user_id)
     if end_time and datetime.now() > end_time:
-        await callback.message.answer("⏰ Время истекло! Игра остановлена.")
+        await callback.message.answer("⏰ Vaqt tugadi! uyin tuxtatildi.")
         await callback.message.delete()
         return
 
