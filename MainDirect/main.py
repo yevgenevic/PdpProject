@@ -15,11 +15,57 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from docx import Document
 from sheets import update_google_sheet
 from datetime import datetime, timedelta
+from fastapi import FastAPI, WebSocket, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 dp = Dispatcher()
 
 ADMIN_ID = 5654406350
 correct_answer = None
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+async def get_ranking():
+    # Ulanish ochiladi
+    conn = await get_db_connection()
+    try:
+        query = """
+        SELECT name, surname, score
+        FROM users
+        ORDER BY score DESC
+        LIMIT 10;
+        """
+        rows = await conn.fetch(query)
+        # JSON formatda qaytaradi
+        return [
+            {"name": row["name"], "surname": row["surname"], "score": row["score"]}
+            for row in rows
+        ]
+    finally:
+        # Ulanishni yopadi
+        await conn.close()
+
+
+@app.websocket("/ws/ranking")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        try:
+            ranking = await get_ranking()
+            await websocket.send_json(ranking)
+            await asyncio.sleep(5)  # Har 5 soniyada yangilash
+        except Exception as e:
+            print(f"WebSocket error: {e}")
+            break
 
 
 class RegistrationStates(StatesGroup):
@@ -473,7 +519,7 @@ async def show_admins(callback: types.CallbackQuery):
 
 
 async def main():
-    bot = Bot(token="7611301913:AAExAJXVMmrOdZ6vDzz9IQejkEJYCZM6D7g",
+    bot = Bot(token="7611301913:AAGu84SKKoVZdJ3f3KfMEodq8tiHIXSZg-s",
               default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await set_commands(bot)
     await dp.start_polling(bot)
